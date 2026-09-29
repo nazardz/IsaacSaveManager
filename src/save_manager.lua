@@ -3,13 +3,14 @@
 
 local game = Game()
 local SaveManager = {}
-SaveManager.VERSION = "2.4.2"
+SaveManager.VERSION = "2.4.2a"
 SaveManager.Utility = {}
 
 SaveManager.Debug = false
 
 SaveManager.AutoCreateRoomSaves = true
 
+local mHuge = math.huge
 local mFloor = math.floor
 
 -- Used in the DEFAULT_SAVE table as a key with the value being the default save data for a player in this save type.
@@ -186,6 +187,7 @@ SaveManager.DEFAULT_SAVE = {
 		movingBox = {},
 		treasureRoom = {},
 		bossRoom = {},
+		hiddenItemWisps = {}
 	},
 	gameNoBackup = {
 		run = {},
@@ -430,18 +432,21 @@ function SaveManager.Utility.GetDefaultSaveKey(ent)
 	return key
 end
 
+-- ECLIPSED: hoisted out of GetSaveIndex so every save lookup doesn't allocate a new table
+local saveIndexTypeToName = {
+	[EntityType.ENTITY_PLAYER] = "PLAYER_",
+	[EntityType.ENTITY_FAMILIAR] = "FAMILIAR_",
+	[EntityType.ENTITY_BOMB] = "BOMB_",
+	[EntityType.ENTITY_PICKUP] = "PICKUP_",
+	[EntityType.ENTITY_SLOT] = "SLOT_",
+	[EntityType.ENTITY_EFFECT] = "EFFECT_"
+}
+
 ---Gets a unique string as an identifier for the entity in the save data.
 ---@param ent? Entity | integer
 ---@param allowSoulSave? boolean
 function SaveManager.Utility.GetSaveIndex(ent, allowSoulSave)
-	local typeToName = {
-		[EntityType.ENTITY_PLAYER] = "PLAYER_",
-		[EntityType.ENTITY_FAMILIAR] = "FAMILIAR_",
-		[EntityType.ENTITY_BOMB] = "BOMB_",
-		[EntityType.ENTITY_PICKUP] = "PICKUP_",
-		[EntityType.ENTITY_SLOT] = "SLOT_",
-		[EntityType.ENTITY_EFFECT] = "EFFECT_"
-	}
+	local typeToName = saveIndexTypeToName
 	local name
 	local identifier
 	if ent and type(ent) == "userdata" then
@@ -606,7 +611,7 @@ function SaveManager.Utility.ValidateForJson(tab)
 				local valType = type(value) == "userdata" and getmetatable(value).__type or type(value)
 				return SaveManager.Utility.ValidityState.INVALID,
 					SaveManager.Utility.JsonIncompatibilityType.INVALID_KEY_TYPE:format(index, tostring(value), valType)
-			elseif value == math.huge or value == -math.huge or value ~= value then
+			elseif value == mHuge or value == -mHuge or value ~= value then
 				return SaveManager.Utility.ValidityState.INVALID, SaveManager.Utility.JsonIncompatibilityType.NAN_VALUE
 			end
 		end
@@ -614,7 +619,7 @@ function SaveManager.Utility.ValidateForJson(tab)
 		-- check for NaN and infinite values
 		-- http://lua-users.org/wiki/InfAndNanComparisons
 		if type(value) == "number" then
-			if value == math.huge or value == -math.huge or value ~= value then
+			if value == mHuge or value == -mHuge or value ~= value then
 				return SaveManager.Utility.ValidityState.INVALID, SaveManager.Utility.JsonIncompatibilityType.NAN_VALUE
 			end
 		elseif type(value) == "table" then
@@ -1845,8 +1850,14 @@ function SaveManager.Init(mod)
 
 	modReference:AddPriorityCallback(ModCallbacks.MC_POST_NEW_ROOM, SaveManager.Utility.CallbackPriority.EARLY,
 		postNewRoom)
-	modReference:AddPriorityCallback(ModCallbacks.MC_POST_NEW_LEVEL, SaveManager.Utility.CallbackPriority.EARLY,
-		postNewLevel)
+
+	if REPENTOGON then
+		modReference:AddPriorityCallback(ModCallbacks.MC_PRE_LEVEL_INIT, SaveManager.Utility.CallbackPriority.EARLY,
+				postNewLevel)
+	else
+		modReference:AddPriorityCallback(ModCallbacks.MC_POST_NEW_LEVEL, SaveManager.Utility.CallbackPriority.EARLY,
+				postNewLevel)
+	end
 	modReference:AddPriorityCallback(ModCallbacks.MC_POST_NEW_LEVEL, SaveManager.Utility.CallbackPriority.LATE,
 		function()
 			SaveManager.Save()
@@ -2012,9 +2023,10 @@ local function getRespectiveSave(ent, noHourglass, initDataIfNotPresent, saveTyp
 	local saveTable = noHourglass and saveTableNoBackup or saveTableBackup
 
 	if not saveTable then return saveTable end
-	local numberListIndex = listIndex or tonumber(SaveManager.Utility.GetListIndex())
-	local stringListIndex = tostring(numberListIndex)
+	-- ECLIPSED: list index only matters for room saves; run/floor lookups skip GetListIndex()
 	if saveType == "room" then
+		local numberListIndex = listIndex or tonumber(SaveManager.Utility.GetListIndex())
+		local stringListIndex = tostring(numberListIndex)
 		if not saveTable[stringListIndex] then
 			SaveManager.Utility.DebugLog("Created index", stringListIndex)
 			saveTable[stringListIndex] = {}
@@ -2331,6 +2343,15 @@ function MenuProvider.SaveMenusPoppedUp(var)
 end
 
 SaveManager.MenuProvider = MenuProvider
+
+
+---Hidden Item Wisps
+function SaveManager.GetHiddenItemWispsSave()
+	if not SaveManager.Utility.IsDataInitialized() then return end
+
+	return dataCache.game.hiddenItemWisps
+end
+
 
 --#endregion
 
